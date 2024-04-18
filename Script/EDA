@@ -1,0 +1,94 @@
+#DataProc cluster and Python module to define perform_EDA and read the CSV file from Google Cloud Storage 
+
+# Import pandas library
+import pandas as pd
+# Set Pandas options to always display floats with a decimal point
+# (not scientific notation)
+pd.set_option('display.float_format', '{:.2f}'.format)
+pd.set_option('display.width', 1000)
+
+import seaborn as sns
+
+def perform_EDA(df, filename):
+    """
+    perform_EDA(df : pd.DataFrame, filename : str)
+    Accepts a dataframe and a text filename as inputs.
+    Runs some basic statistics on the data and outputs to console.
+
+    :param df: The Pandas dataframe to explore
+    :param filename: The name of the data file
+    :return: A dictionary containing the statistics 
+    """
+    eda_results = {}
+    
+    eda_results[f"{filename} Number of records"] = df.shape[0]
+    eda_results[f"{filename} Number of duplicate records"] = len(df) - len(df.drop_duplicates())
+    eda_results[f"{filename} Info"] = df.info()
+    eda_results[f"{filename} Describe"] = df.describe()
+    eda_results[f"{filename} Columns with null values"] = df.columns[df.isnull().any()].tolist()
+    eda_results[f"{filename} Number of Rows with null values"] = df.isnull().any(axis=1).sum()
+    eda_results[f"{filename} Integer data type columns"] = df.select_dtypes(include='int64').columns.tolist()
+    eda_results[f"{filename} Float data type columns"] = df.select_dtypes(include='float64').columns.tolist()
+
+    return eda_results
+
+
+
+all_eda_results = {}
+
+filepath = "gs://my-bigdata-project-la/landing/"
+filename_list = ['song_lyrics.csv']
+column_names = ['title', 'genre', 'artist', 'year', 'views', 'featured Artists', 'lyrics', 'id', 'language_cld3','language_ft','language']
+
+for filename in filename_list:
+    # Read in amazon reviews. Reminder: Tab-separated values files
+    print(f"Working on file: {filename}")
+    skip = 0
+    nrows = 300000   
+    # Total number of rows to read
+    total_rows_to_read = 5100000
+    # Read in the first set of rows using Python Pandas
+    df_chunk = pd.read_csv(f"{filepath}{filename}", sep=',', skiprows=skip, nrows=nrows, names=column_names, encoding='utf-8')
+    # Increment the skip
+    skip = skip + nrows
+    while (skip < total_rows_to_read):
+        print(f"Reading in {nrows} records starting at {skip}")
+        df_chunk = pd.read_csv(f"{filepath}{filename}", sep=',', skiprows=skip, nrows=nrows, names=column_names, encoding='utf-8')
+        skip = skip + nrows
+        eda_results = perform_EDA(df_chunk, filename)
+        all_eda_results[f"{filename}_chunk{skip // nrows}"] = eda_results
+        
+for chunk, results in all_eda_results.items():
+    print(f"EDA results for {chunk}:")
+    print(results)
+
+
+
+
+#Using Spark to count observations, nulls in columns, and duplicates
+
+Spark
+
+# Import some functions we will use later
+from pyspark.sql.functions import col, isnan, isnull, when, count, udf
+
+# Set the logging level for ERRORs only.
+sc.setLogLevel("ERROR")
+
+bucket = 'data-project-la/landing/'
+filename = 'song_lyrics.csv'
+file_path = "gs://my-bigdata-project-la/landing/"
+# Create a Spark Dataframe from the file on GCS
+sdf = spark.read.csv(file_path, sep=',', header=True, inferSchema=True)
+
+#Number of observations
+sdf.count()
+
+# Check to see if some of the columns have NULL values
+
+sdf.select([count(when(isnull(c), c)).alias(c) for c in ["title", "tag","artist","year","artist","views","features"] ]).show()
+
+
+duplicate_count = sdf.groupBy(sdf.columns).count().filter("count > 1").count()
+
+print(f"Number of duplicate records: {duplicate_count}")
