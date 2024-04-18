@@ -1,0 +1,115 @@
+spark 
+
+# Import some functions we will use later
+from pyspark.sql.functions import col, isnan, isnull, when, count, udf
+from pyspark.sql import SparkSession
+from pyspark.sql.types import StructField, StructType, StringType, IntegerType, FloatType
+
+# Set the logging level for ERRORs only.
+sc.setLogLevel("ERROR")
+
+bucket = 'data-project-la/landing/'
+filename = 'song_lyrics.csv'
+file_path = "gs://my-bigdata-project-la/landing/"
+# Create a Spark Dataframe from the file on GCS
+sdf = spark.read.csv(file_path, sep=',', header=True, inferSchema=True)
+
+
+# Look at statistics for some specific columns
+sdf.select("views", "year", "id").summary("count", "min", "max", "mean").show()
+
+# Look at the Review headline and Review Body
+sdf.select("title", "tag", "artist", "lyrics").summary("count", "min", "max").show()
+
+# Define a function to strip out any non-ascii characters
+def ascii_only(mystring):
+  if mystring:
+    return mystring.encode('ascii', 'ignore').decode('ascii')
+  else:
+    return None
+
+# Turn this function into a User-Defined Function (UDF)
+ascii_udf = udf(ascii_only)
+
+sdf = sdf.withColumn("clean_title", ascii_udf('title')) 
+sdf = sdf.withColumn("clean_genre", ascii_udf('tag'))
+sdf = sdf.withColumn("clean_artist", ascii_udf('artist'))
+sdf = sdf.withColumn("clean_year", ascii_udf('year'))
+sdf = sdf.withColumn("clean_views", ascii_udf('views'))
+sdf = sdf.withColumn("clean_features", ascii_udf('features')) 
+sdf = sdf.withColumn("clean_lyrics", ascii_udf('lyrics'))
+sdf = sdf.withColumn("clean_id", ascii_udf('id'))
+
+
+# Drop columns "column1" and "column2"
+sdf = sdf.drop("title","tag","artist","year","views","features", "lyrics", "id","language_cld3","language_ft")
+
+
+#Re-check the cleaned headline and body
+sdf.select("clean_title", "clean_genre","clean_artist","clean_features").summary("count", "min", "max").show()
+
+sdf.select("clean_year", "clean_views","clean_lyrics","clean_id").summary("count", "min", "max").show()
+
+# Filter out records with non-numeric values in the id column
+sdf = sdf.filter(col("id").rlike("^[0-9]+$"))
+
+#count duplicates 
+# Group by the columns you suspect have duplicates and count the occurrences
+duplicate_counts = sdf.groupBy(["clean_title", "clean_genre", "clean_artist", "clean_year", "clean_views", "clean_features", "clean_lyrics", "clean_id"]).count()
+
+# Filter out records where count is greater than 1 to identify duplicates
+duplicates = duplicate_counts.filter(col("count") > 1)
+
+# Count the total number of duplicate records
+total_duplicates = duplicates.count()
+
+# Show the total number of duplicate records
+print("Total number of duplicates:", total_duplicates)
+
+# Show the duplicate records
+
+sdf= sdf.dropDuplicates()
+
+# Define the desired order of columns
+desired_order = ["clean_id", "clean_title", "clean_genre", "clean_artist", "clean_year", "clean_views", "clean_features", "clean_lyrics","language"]
+
+# Select columns in the desired order
+sdf = sdf.select(desired_order)
+
+from pyspark.sql.types import StructField, StructType, StringType, IntegerType
+
+# Define the new schema with modified column names and types
+new_schema = StructType([
+    StructField("id", IntegerType(), nullable=True),
+    StructField("title", StringType(), nullable=True),
+    StructField("genre", StringType(), nullable=True),
+    StructField("artist", StringType(), nullable=True),
+    StructField("year", IntegerType(), nullable=True),
+    StructField("views", IntegerType(), nullable=True),
+    StructField("features", StringType(), nullable=True),
+    StructField("lyrics", StringType(), nullable=True),
+    StructField("language", StringType(), nullable=True)
+    
+])
+sdf = sdf.toDF(*[field.name for field in new_schema.fields])
+    
+sdf = sdf.orderBy("id")
+
+from pyspark.sql.functions import monotonically_increasing_id
+
+# Add a new column with monotonically increasing IDs
+sdf = sdf.withColumn("new_id", (monotonically_increasing_id() + 1).cast("int"))
+
+# Drop the old "id" column and rename the new "new_id" column to "id"
+sdf = sdf.drop("id").withColumnRenamed("new_id", "id")
+
+# Drop Nulls
+# Drop some of the records where the certain columns are empty (null or nan)
+sdf = sdf.na.drop(subset=["genre", "lyrics"])
+
+# Save the cleaned data in a new file. Use Parquet file format.
+# Options: https://spark.apache.org/docs/latest/sql-data-sources-parquet.html
+output_file_path= f"gs://{'my-bigdata-project-la/cleaned'}/cleaned_song_lyrics.parquet"
+sdf.write.mode("overwrite").parquet(output_file_path)
+
+
