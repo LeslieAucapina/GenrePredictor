@@ -145,23 +145,15 @@ sdf_features = sdf_features.withColumn('yearBucket',
               .when(sdf.year >= 1970, 1)
               .otherwise(0))
 
-sdf_features
+assembler = VectorAssembler(inputCols=["yearBucket","idf_features","sentiment"], outputCol="combinedFeatures")
 
 from pyspark.ml import Pipeline
 from pyspark.ml.feature import OneHotEncoder, StringIndexer, VectorAssembler
 from pyspark.sql.functions import col
 
-# Create an indexer for just the artist string-based columns.
-
-##  RH  indexer = StringIndexer(inputCols=["artist", "title"], outputCols=["artistIndex", "titleIndex"])
-indexer = StringIndexer(inputCols=["artist"], outputCols=["artistIndex"])
-
-# sdf_features = indexer.fit(sdf_features).transform(sdf_features)
-
-
 # Creating the pipeline and transforming data 
 
-song_pipe = Pipeline(stages=[indexer, encoder, assembler])
+song_pipe = Pipeline(stages=[assembler])
 
 # Call .fit to transform the data
 transformed_sdf = song_pipe.fit(sdf_features).transform(sdf_features)

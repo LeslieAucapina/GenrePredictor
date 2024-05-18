@@ -1,0 +1,31 @@
+spark
+
+from pyspark.ml.tuning import CrossValidator, ParamGridBuilder
+from pyspark.ml.evaluation import BinaryClassificationEvaluator
+from pyspark.ml.classification import LogisticRegression
+
+# Assuming lr is your LogisticRegression estimator and trainingData is your training dataset
+
+# Sample a fraction of your training data
+sampled_trainingData = trainingData.sample(fraction=0.1, seed=42)
+
+# Create a BinaryClassificationEvaluator with AUC-ROC as the metric
+evaluator = BinaryClassificationEvaluator(metricName='areaUnderROC')
+
+# Define a smaller parameter grid with fewer combinations
+paramGrid = ParamGridBuilder() \
+    .addGrid(lr.regParam, [0.1, 0.01]) \
+    .addGrid(lr.elasticNetParam, [0.0, 0.5]) \
+    .build()
+
+# Create a CrossValidator with 3 folds
+cv = CrossValidator(estimator=lr,
+                    estimatorParamMaps=paramGrid,
+                    evaluator=evaluator,
+                    numFolds=3)
+
+# Fit CrossValidator on sampled training data to find the best model
+cv_model = cv.fit(sampled_trainingData)
+
+# Show the average performance metrics over the folds
+print("Average AUC-ROC across all folds: ", cv_model.avgMetrics)

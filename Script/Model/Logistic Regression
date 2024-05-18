@@ -1,0 +1,48 @@
+
+#Import features from saved Google Cloud Bucket, in folder name "trusted"
+# Now you can use the combinedFeatures to predict the label
+transformed_sdf = transformed_sdf.sample(False, 0.10)
+
+
+# Create a LogisticRegression Estimator
+lr = LogisticRegression(featuresCol="combinedFeatures", labelCol="label")
+
+lr_model = lr.fit(trainingData)
+lr_model = lr.fit(trainingData)
+Output: 
+Intercept:  -6.918475386580401
+
+
+# Test the model on the testData
+test_results = lr_model.transform(testData)
+
+# Show the test results
+test_results.select('artist','sentiment','title','year','genre', 'rawPrediction', 'probability', 'prediction','label').show(20, truncate=False)
+
+# Show the confusion matrix
+ test_results.groupby('label').pivot('prediction').count().sort('label').show()
+
+confusion_matrix = test_results.groupby('label').pivot('prediction').count().fillna(0).collect()
+
+print("label|   0.0    | 1.0")
+print( confusion_matrix[0][0]," |", confusion_matrix[0][1],"   |",confusion_matrix[0][2])
+print( confusion_matrix[1][0]," |", confusion_matrix[1][1],"   |",confusion_matrix[1][2])
+
+def calculate_recall_precision(confusion_matrix):
+    tn = confusion_matrix[0][1]  # True Negative
+    fp = confusion_matrix[0][2]  # False Positive
+    fn = confusion_matrix[1][1]  # False Negative
+    tp = confusion_matrix[1][2]  # True Positive
+    precision = tp / ( tp + fp )            
+    recall = tp / ( tp + fn )
+    accuracy = ( tp + tn ) / ( tp + tn + fp + fn )
+    f1_score = 2 * ( ( precision * recall ) / ( precision + recall ) )
+    return accuracy, precision, recall, f1_score
+
+print("Accuracy, Precision, Recall, F1 Score")
+print( calculate_recall_precision(confusion_matrix) )
+
+
+model_folder = "gs://my-bigdata-project-la/models/logistic_regression_model"
+lr_model.save(model_folder)
+print(f"Model saved to {model_folder}")
