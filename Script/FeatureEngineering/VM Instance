@@ -1,0 +1,9 @@
+# Used to upload textblob library 
+
+python3 -m venv myenv
+source myenv/bin/activate
+mkdir dependencies
+cd dependencies
+pip download textblob -d .
+
+zip -r dependencies.zip .

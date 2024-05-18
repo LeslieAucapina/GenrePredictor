@@ -1,0 +1,175 @@
+Spark
+
+%pip install textblob
+
+from pyspark.sql import SparkSession
+
+# Create SparkSession
+spark = SparkSession.builder.getOrCreate()
+
+# Add the dependencies zip file to the SparkContext
+spark.sparkContext.addPyFile("/home/aucapinaleslie/dependencies/dependencies.zip")
+
+!source /home/aucapinaleslie/myenv/bin/activate
+
+from textblob import TextBlob
+
+try:
+    # Create a TextBlob object
+    blob = TextBlob("This is a test sentence")
+    # Print the sentiment
+    print("Sentiment:", blob.sentiment)
+except ImportError:
+    print("Failed to import TextBlob")
+
+try:
+    # Create a TextBlob object
+    blob = TextBlob("This is a test sentence")
+    # Print the sentiment
+    print("Sentiment:", blob.sentiment)
+except ImportError:
+    print("Failed to import TextBlob")
+
+from pyspark.sql.functions import col
+from pyspark.sql.functions import *
+from pyspark.ml.feature import StringIndexer, OneHotEncoder, VectorAssembler
+from pyspark.ml import Pipeline
+# Import the logistic regression model
+from pyspark.ml.classification import LogisticRegression, LogisticRegressionModel
+# Import the evaluation module
+from pyspark.ml.evaluation import *
+# Import the model tuning module
+from pyspark.ml.tuning import *
+import numpy as np
+
+
+filepath = 'gs://my-project-bucket-lyrics/cleaned/song_lyrics_cleaned.parquet'
+sdf = spark.read.parquet(filepath )
+
+
+sdf = sdf.filter( sdf.year > 1900).filter( sdf.year < 2025)
+
+sdf.select('year').show()
+
+sdf = sdf.withColumn("year", col("year").cast("int"))
+
+sdf.printSchema()
+
+# Drop specific columns
+columns_to_drop = ['views', 'features', 'language', 'language_cld3', 'language_ft']
+sdf = sdf.drop(*columns_to_drop)
+
+# Rename the 'tag' column to 'genre'
+sdf = sdf.withColumnRenamed("tag", "genre")
+
+sdf.printSchema()
+
+
+# Drop rows with null values in the "year" column
+sdf = sdf.dropna(subset=["year","artist","title","lyrics","genre"])
+
+sdf.select("year","artist","title","lyrics","genre").show()
+
+sdf_features = sdf
+
+from pyspark.ml.feature import RegexTokenizer, HashingTF, IDF
+from pyspark.sql.functions import monotonically_increasing_id
+
+
+
+# Create a RegexTokenizer instance
+regexTokenizer = RegexTokenizer(inputCol="lyrics", outputCol="words", pattern="\\w+", gaps=False)
+
+# Apply the tokenizer to the lyrics DataFrame
+sdf_features = regexTokenizer.transform(sdf_features)
+
+# Create an instance of HashingTF
+hashingTF = HashingTF(numFeatures=4096, inputCol="words", outputCol="word_features")
+
+# Apply the HashingTF transformation to your DataFrame containing tokenized words
+sdf_features = hashingTF.transform(sdf_features)
+
+# # Show the result
+# term_freq_sdf.select(['words','word_features']).show(truncate=False)
+
+# Create an instance of IDF, importance of word based on which most repeated
+idf = IDF(inputCol='word_features', outputCol="idf_features", minDocFreq=1) 
+
+#Create the idf_features
+# Fit IDF model to your DataFrame, this idf is just another feature
+sdf_features = idf.fit(sdf_features).transform(sdf_features)
+
+sdf_features.select('lyrics', 'idf_features').show(10)
+
+#Create an instance of sentiment 
+
+from pyspark.sql.functions import udf
+from pyspark.sql.types import DoubleType
+from textblob import TextBlob
+import numpy
+
+# Define a function to perform sentiment analysis on TF-IDF vectors
+def sentiment_analysis(words_string):
+    # Convert TF-IDF vector back to text
+    # text = " ".join(tfidf_vector) if tfidf_vector else ""
+    # Perform sentiment analysis using TextBlob
+    # RH: Needs to work on a STRING not a vector
+    sentiment = TextBlob(words_string).sentiment.polarity
+    return sentiment
+
+# Define a UDF for the sentiment analysis function
+sentiment_analysis_udf = udf(sentiment_analysis, DoubleType())
+
+# Apply sentiment analysis to the TF-IDF vectors
+sdf_features = sdf_features.withColumn("sentiment", sentiment_analysis_udf("lyrics"))
+
+sdf_features.printSchema()
+
+sdf_features.select('lyrics', 'idf_features', 'sentiment').show(10)
+
+from pyspark.ml.feature import VectorAssembler, MinMaxScaler
+from pyspark.sql.functions import col, when
+from pyspark.ml.feature import Bucketizer
+
+# Define splits for bucketizing years
+year_splits = [-float("inf"), 1950.0, 1970.0, 1990.0, 2010.0, float("inf")]
+
+# Create a Bucketizer instance for year
+## RH: This was a bug - it was reading from the original 'sdf' so it woud erase all of the features
+## sdf_features = sdf.withColumn('yearBucket',
+sdf_features = sdf_features.withColumn('yearBucket',
+               when(sdf.year >= 2010, 5)
+              .when(sdf.year >= 2000, 4)
+              .when(sdf.year >= 1990, 3)
+              .when(sdf.year >= 1980, 2)
+              .when(sdf.year >= 1970, 1)
+              .otherwise(0))
+
+sdf_features
+
+from pyspark.ml import Pipeline
+from pyspark.ml.feature import OneHotEncoder, StringIndexer, VectorAssembler
+from pyspark.sql.functions import col
+
+# Create an indexer for just the artist string-based columns.
+
+##  RH  indexer = StringIndexer(inputCols=["artist", "title"], outputCols=["artistIndex", "titleIndex"])
+indexer = StringIndexer(inputCols=["artist"], outputCols=["artistIndex"])
+
+# sdf_features = indexer.fit(sdf_features).transform(sdf_features)
+
+
+# Creating the pipeline and transforming data 
+
+song_pipe = Pipeline(stages=[indexer, encoder, assembler])
+
+# Call .fit to transform the data
+transformed_sdf = song_pipe.fit(sdf_features).transform(sdf_features)
+
+# Predict if this song is rap or not.
+transformed_sdf = transformed_sdf.withColumn("label", when(transformed_sdf["genre"] == "rap", 1.0).otherwise(0.0))
+
+# Show the DataFrame with labels
+transformed_sdf.select("genre", "label").show()
+
+transformed_sdf.select('artist','sentiment','title','year','genre','label','combinedFeatures').show(5)
